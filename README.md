@@ -6,3 +6,6 @@ Old Prodigy is for historical purposes.
 # Update on real multiplayer mode for pde1500
 
 You can now see other players!
+
+# NOTE ON PDE2016
+Only people 13 years or older can access online mode.
