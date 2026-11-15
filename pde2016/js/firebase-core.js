@@ -446,11 +446,107 @@ FirebaseCore._lastMember = null;
 
 // Forget what we last wrote. Call on every user change (sign-in, sign-out,
 // account deletion) so one account's cache can never suppress another's writes.
+// Fix: arena matchmaking used playerA.id as the opponent id unconditionally, so
+// the player who happened to be "playerA" fought themselves. Use the other
+// player's id as the opponent.
+(function () {
+	if (typeof Prodigy === "undefined" || !Prodigy.Container || !Prodigy.Container.Arena) return;
+	Prodigy.Container.Arena.prototype.messageRecieved = function (e) {
+		console.log(e);
+		if (Util.isDefined(this.timer)) window.clearInterval(this.timer);
+		this.message.setText("Match found! Connecting now...");
+		this.game.prodigy.network.sendAnalytics("PVP", "found-match", "Events");
+		var t = function (g) { g.state.start("Arena"); };
+		var i = new Player;
+		var me = this.game.prodigy.player.userID;
+		var opponentId;
+		if (e.playerA.id !== me) { i.init(e.playerA.data); opponentId = e.playerA.id; }
+		else { i.init(e.playerB.data); opponentId = e.playerB.id; }
+		this.game.prodigy.pvp.start(opponentId, this.game.prodigy.player, i, t.bind(this, this.game), !0, "Arena");
+	};
+})();
+
 FirebaseCore.resetCloudDedupe = function () {
 	FirebaseCore._lastSaveSig = null;
 	FirebaseCore._lastPublicSig = null;
 	FirebaseCore._lastMember = null;
 };
+
+// Free-text chat: the retail client only knows how to render phrase IDs, so
+// anything typed that isn't a known phrase is dropped. Make the phrase table
+// echo arbitrary text back, and let Enter send the raw typed string as a
+// chatID (the receiver's chatText then renders it verbatim).
+(function () {
+	if (typeof Prodigy === "undefined" || !Prodigy.ChatManager || !Prodigy.Menu || !Prodigy.Menu.Chat) return;
+	var origGetPhrase = Prodigy.ChatManager.prototype.getPhrase;
+	Prodigy.ChatManager.prototype.getPhrase = function (e) {
+		if (typeof e === "string") return e;
+		return origGetPhrase.call(this, e);
+	};
+	var origCreate = Prodigy.Menu.Chat.prototype.create;
+	Prodigy.Menu.Chat.prototype.create = function () {
+		origCreate.call(this);
+		var self = this;
+		var inputEl = this.input && this.input.input;
+		if (!inputEl) return;
+		var BLOCKED_CHAT_TERMS = ["nigger","nigga","n1gger","n1gga","chink","spic","kike","faggot","fag","tranny","retard","retarded","wetback","beaner","coon","gook","dyke","queer","homo","slut","whore"];
+		// Also guard the receive side so blocked text never renders, even if sent.
+		try {
+			for (var _k in Prodigy) {
+				var _o = Prodigy[_k];
+				if (_o && _o.prototype && typeof _o.prototype.chatText === "function" && !_o.prototype.__chatTextPatched) {
+					var _orig = _o.prototype.chatText;
+					_o.prototype.chatText = function (e) {
+						if (typeof e === "string") {
+							var norm = e.toLowerCase().replace(/[^a-z0-9]/g, "");
+							for (var i = 0; i < BLOCKED_CHAT_TERMS.length; i++) {
+								var t = BLOCKED_CHAT_TERMS[i].replace(/[^a-z0-9]/g, "");
+								if (t && norm.indexOf(t) !== -1) return;
+							}
+						}
+						return _orig.call(this, e);
+					};
+					_o.prototype.__chatTextPatched = true;
+				}
+			}
+		} catch (e) {}
+		var isBlockedChat = function (text) {
+			var norm = String(text || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+			for (var i = 0; i < BLOCKED_CHAT_TERMS.length; i++) {
+				var t = BLOCKED_CHAT_TERMS[i].replace(/[^a-z0-9]/g, "");
+				if (t && norm.indexOf(t) !== -1) return true;
+			}
+			return false;
+		};
+		var sendRaw = function () {
+			var text = (self.input.getValue() || "").trim();
+			if (!text) return;
+			if (isBlockedChat(text)) {
+				try { self.input.setValue(""); } catch (e) {}
+				try { self.game.prodigy.open.message("That message isn't allowed."); } catch (e) {}
+				return;
+			}
+			self.clearSearch();
+			try { self.input.setFocus(null); } catch (e) {}
+			self.game.prodigy.player.chatID = text;
+			self.game.prodigy.network.emitMessage({
+				action: "chat",
+				data: { userID: self.game.prodigy.player.userID, chatID: text }
+			});
+		};
+		var handler = function (ev) {
+			var code = ev && (ev.keyCode || ev.which);
+			if (code === 13 || code === 10) {
+				sendRaw();
+				if (ev.preventDefault) ev.preventDefault();
+				if (ev.stopPropagation) ev.stopPropagation();
+				return false;
+			}
+		};
+		inputEl.onkeydown = handler;
+		if (inputEl.addEventListener) inputEl.addEventListener("keydown", handler, true);
+	};
+})();
 
 FirebaseCore._sigOf = function (obj, ignore) {
 	var sig = {};
@@ -591,6 +687,7 @@ FirebaseCore.refreshNetworkCredentials = function (game) {
 	var net = game && game.prodigy && game.prodigy.network;
 	if (!net || !net.api || !FirebaseCore.user) return;
 	net.api.userID = FirebaseCore.user.uid;
+	if (game && game.prodigy && game.prodigy.player) game.prodigy.player.userID = FirebaseCore.user.uid;
 	var apply = function (n) {
 		FirebaseCore.getFreshToken(function (err, token) {
 			if (token) n.api.uniqueKey = token;
