@@ -50,7 +50,7 @@ FirebaseCore.RESERVED_USERNAMES = {
 	admin: 1, administrator: 1, moderator: 1, mod: 1, staff: 1, prodigy: 1,
 	"prodigy game": 1, classdigy: 1, support: 1, help: 1, official: 1, owner: 1,
 	root: 1, system: 1, "game master": 1, gm: 1, teacher: 1, principal: 1,
-	"old prodigy": 1, entrap: 1, "null": 1, undefined: 1
+	"old prodigy": 1, Entrapta_the_prod: 1, "null": 1, undefined: 1
 };
 
 FirebaseCore.normalizeUsername = function (name) {
