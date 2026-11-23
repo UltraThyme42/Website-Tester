@@ -108,9 +108,9 @@ class ModHandler {
 				text: "Watch Intro",
 				size: Prodigy.Control.TextButton.MED
 			}, this.openIntro.bind(this)), this.game.prodigy.create.textButton(this.content, 150, 125, {
-				text: "Toggle Member",
-				size: Prodigy.Control.TextButton.MED
-			}, this.toggleMember.bind(this)),
+			text: "Toggle Member",
+			size: Prodigy.Control.TextButton.MED
+		}, this.toggleMember.bind(this)),
 			this.walkSpeedBar = this.game.prodigy.create.slider(this.content, 37, 215, 525, !1, !1),
 			this.walkSpeedBar.reset(200, 0, Math.floor((this.game.prodigy.player.walkSpeed - 0.1) * 10), this.setWalkSpeed.bind(this))
 		};
