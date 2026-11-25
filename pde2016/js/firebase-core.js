@@ -50,7 +50,7 @@ FirebaseCore.RESERVED_USERNAMES = {
 	admin: 1, administrator: 1, moderator: 1, mod: 1, staff: 1, prodigy: 1,
 	"prodigy game": 1, classdigy: 1, support: 1, help: 1, official: 1, owner: 1,
 	root: 1, system: 1, "game master": 1, gm: 1, teacher: 1, principal: 1,
-	"old prodigy": 1, Entrapta_the_prod: 1, "null": 1, undefined: 1
+	"old prodigy": 1, entrap: 1, "null": 1, undefined: 1
 };
 
 FirebaseCore.normalizeUsername = function (name) {
@@ -241,11 +241,40 @@ FirebaseCore.describeError = function (err) {
 	}
 };
 
+FirebaseCore.getSaveVersion = function () {
+	try {
+		var game = FirebaseCore.getGame();
+		var v = game && game.prodigy && game.prodigy.version;
+		if (v) return String(v);
+	} catch (e) {}
+	return "1-30-0";
+};
+
+FirebaseCore.saveDoc = function (uid, version) {
+	version = version || FirebaseCore.getSaveVersion();
+	return firebase.firestore().collection("saves").doc(uid).collection("versions").doc(String(version));
+};
+
+FirebaseCore.legacySaveDoc = function (uid) {
+	return firebase.firestore().collection("saves").doc(uid);
+};
+
 FirebaseCore.readCloudSave = function () {
-	return firebase.firestore().collection("saves").doc(FirebaseCore.user.uid).get().then(function (doc) {
+	var uid = FirebaseCore.user.uid;
+	var version = FirebaseCore.getSaveVersion();
+	return FirebaseCore.saveDoc(uid, version).get().then(function (doc) {
 		var d = doc.exists ? doc.data() : null;
-		return d && d.appearancedata && d.data ? d : null
-	})
+		if (d && d.appearancedata && d.data) return d;
+		// Backward compat: older clients stored one save at saves/{uid}.
+		// Only adopt it when it belongs to this game version (or has no version).
+		return FirebaseCore.legacySaveDoc(uid).get().then(function (legacyDoc) {
+			var ld = legacyDoc.exists ? legacyDoc.data() : null;
+			if (!ld || !ld.appearancedata || !ld.data) return null;
+			var legacyVersion = ld.gameVersion ? String(ld.gameVersion) : null;
+			if (legacyVersion && legacyVersion !== String(version)) return null;
+			return ld;
+		});
+	});
 };
 
 FirebaseCore.applySaveSafely = function (state, save) {
@@ -345,7 +374,16 @@ FirebaseCore.deleteAccount = function (password, done) {
 			handle = doc.exists && doc.data().usernameLower || null;
 		}, function () {});
 	}).then(function () {
-		return firebase.firestore().collection("saves").doc(user.uid).delete()
+		// Delete versioned saves (saves/{uid}/versions/*) and legacy saves/{uid}.
+		var db = firebase.firestore();
+		return db.collection("saves").doc(user.uid).collection("versions").get().then(function (snap) {
+			var deletes = [];
+			if (snap && !snap.empty) snap.forEach(function (doc) { deletes.push(doc.ref.delete().catch(function () {})); });
+			deletes.push(db.collection("saves").doc(user.uid).delete().catch(function () {}));
+			return Promise.all(deletes);
+		}, function () {
+			return db.collection("saves").doc(user.uid).delete().catch(function () {});
+		});
 	}).then(function () {
 		return firebase.firestore().collection("players").doc(user.uid).delete()
 	}).then(function () {
@@ -575,9 +613,9 @@ FirebaseCore.pushSave = function (done) {
 		var cleanSave = FirebaseCore.toFirestoreData(save);
 		var saveSig = FirebaseCore._sigOf(cleanSave, ["savedAt", "updatedAt"]);
 		if (saveSig !== FirebaseCore._lastSaveSig) {
-			firebase.firestore().collection("saves").doc(FirebaseCore.user.uid).set(cleanSave).then(function () {
+			FirebaseCore.saveDoc(FirebaseCore.user.uid).set(cleanSave).then(function () {
 				FirebaseCore._lastSaveSig = saveSig;
-				console.log("Cloud save pushed: " + (save.appearancedata && save.appearancedata.name));
+				console.log("Cloud save pushed: " + (save.appearancedata && save.appearancedata.name) + " [" + FirebaseCore.getSaveVersion() + "]");
 				done(null);
 			}, function (e) {
 				FirebaseCore._lastSaveSig = null;
@@ -854,7 +892,20 @@ FirebaseCore.worldChosen = function (game, e, t, i) {
 			game.prodigy.open.charSelect();
 			return;
 		}
-		FirebaseCore.enableOnlineMultiplayer(game);
+		if (e) {
+			// Play offline: do not enable multiplayer or connect to the relay.
+			try {
+				var net = game && game.prodigy && game.prodigy.network;
+				if (net) {
+					net.loggedIn = !1;
+					if (net.socket && typeof net.socket.disconnect === "function") net.socket.disconnect();
+				}
+			} catch (e3) {
+				console.log("offline cleanup failed: " + e3);
+			}
+		} else {
+			FirebaseCore.enableOnlineMultiplayer(game);
+		}
 		var zone = game.prodigy.player && game.prodigy.player.data && game.prodigy.player.data.zone;
 		if (zone && String(zone).indexOf("-") > 0) {
 			try {
@@ -876,7 +927,7 @@ FirebaseCore.worldChosen = function (game, e, t, i) {
 FirebaseCore.relayDownFallback = function (game) {
 	try {
 		var openOffline = function () {
-			FirebaseCore.worldChosen(game, null, !0, !1);
+			FirebaseCore.worldChosen(game, !0, !1, !1);
 		};
 		game.prodigy.open.message(
 			"The multiplayer worlds can't be reached right now. The free server may be waking up — try again in a minute.\n\nYou can keep playing offline; your progress syncs next time you sign in.",
